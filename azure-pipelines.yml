@@ -1,0 +1,118 @@
+trigger:
+  paths:
+    include:
+      - vote/*
+      - result/*
+      - worker/*
+
+parameters:
+  - name: appName
+    type: string
+    default: vote-app
+    values:
+      - vote-app
+      - result-app
+      - worker-app
+
+  - name: repoName
+    type: string
+    default: My_Personal_Application
+
+resources:
+  - repo: self
+
+variables:
+  - group: docker-variables
+
+  - name: imageTag
+    value: $(Build.BuildId)
+
+  - name: dockerUsername
+    value: $(dockerHubUsername)
+
+  - name: dockerImageName
+    value: $(dockerUsername)/${{ parameters.appName }}
+
+  - ${{ if eq(parameters.appName, 'vote-app') }}:
+      - name: dockerfilePath
+        value: vote/Dockerfile
+
+  - ${{ if eq(parameters.appName, 'result-app') }}:
+      - name: dockerfilePath
+        value: result/Dockerfile
+
+  - ${{ if eq(parameters.appName, 'worker-app') }}:
+      - name: dockerfilePath
+        value: worker/Dockerfile
+
+pool:
+  name: 'agentcicd'
+
+stages:
+# -----------------------------
+# Stage: Build Docker Image
+# -----------------------------
+- stage: Build
+  displayName: Build Docker Image
+  jobs:
+    - job: BuildJob
+      displayName: Build Job
+      steps:
+        - task: Docker@2
+          displayName: Build Docker Image
+          inputs:
+            command: 'build'
+            containerRegistry: '$(dockerServiceConnection)'
+            repository: '$(dockerImageName)'
+            Dockerfile: '$(dockerfilePath)'
+            tags: '$(imageTag)'
+
+        - script: |
+            docker images
+            echo "✅ Docker image built and tagged as $(dockerImageName):$(imageTag)"
+          displayName: Verify Docker Image
+
+# -----------------------------
+# Stage: Push Docker Image
+# -----------------------------
+- stage: Push
+  displayName: Push Docker Image
+  dependsOn: Build
+  jobs:
+    - job: PushJob
+      displayName: Push Job
+      steps:
+        - task: Docker@2
+          displayName: Login to Docker Hub
+          inputs:
+            command: login
+            containerRegistry: '$(dockerServiceConnection)'
+
+        - task: Docker@2
+          displayName: Push Docker Image
+          inputs:
+            command: push
+            containerRegistry: '$(dockerServiceConnection)'
+            repository: '$(dockerImageName)'
+            tags: '$(imageTag)'
+
+# -----------------------------
+# Stage: Update K8s Manifest
+# -----------------------------
+- stage: Update
+  displayName: Update Kubernetes Manifest
+  dependsOn: Push
+  jobs:
+    - job: UpdateManifest
+      displayName: Update Image Tag in K8s Manifest
+      steps:
+        - checkout: self
+
+        - task: ShellScript@2
+          displayName: Run Script to Update Manifest
+          inputs:
+            scriptPath: '$(updateScriptPath)'
+            args: '${{ parameters.appName }} $(dockerUsername) $(imageTag) $(azureOrgName) $(projectName) ${{ parameters.repoName }}'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)
+

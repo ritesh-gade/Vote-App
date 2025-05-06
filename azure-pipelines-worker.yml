@@ -1,0 +1,142 @@
+trigger:
+  paths:
+    include:
+      - worker/*
+
+resources:
+  - repo: self
+
+variables:
+  - group: docker-variables
+
+  - name: imageTag
+    value: $(Build.BuildId)
+
+  - name: appName
+    value: worker-app
+
+  - name: dockerUsername
+    value: $(dockerHubUsername)
+
+  - name: dockerImageName
+    value: $(dockerUsername)/$(appName)
+
+  - name: dockerfilePath
+    value: worker/Dockerfile
+
+  - name: repoName
+    value: My_Personal_Application
+
+pool:
+  name: 'agentcicd'
+
+# -----------------------------
+# Stage: Build Docker Image
+# -----------------------------
+stages:
+- stage: Build
+  displayName: Build Docker Image
+  jobs:
+    - job: BuildJob
+      displayName: Build Job
+      steps:
+        - task: Docker@2
+          displayName: Build Docker Image
+          inputs:
+            command: 'build'
+            containerRegistry: '$(dockerServiceConnection)'  # ✅ Needed to tag properly
+            repository: '$(dockerImageName)'                 # ✅ Needed to tag properly
+            Dockerfile: '$(dockerfilePath)'
+            tags: '$(imageTag)'                              # e.g., 9881665778/vote-app:65
+
+        - script: |
+            docker images
+            echo "✅ Docker image built and tagged as $(dockerImageName):$(imageTag)"
+          displayName: Verify Docker Image
+
+# -----------------------------
+# Stage: Push Docker Image
+# -----------------------------
+- stage: Push
+  displayName: Push Docker Image
+  dependsOn: Build
+  jobs:
+    - job: PushJob
+      displayName: Push Job
+      steps:
+        - task: Docker@2
+          displayName: Login to Docker Hub
+          inputs:
+            command: login
+            containerRegistry: '$(dockerServiceConnection)'
+
+        - script: |
+            docker push $(dockerImageName):$(imageTag)
+          displayName: Push Docker Image
+
+# -----------------------------
+# Stage: Update K8s Manifest
+# -----------------------------
+
+- stage: Update
+  displayName: Update Kubernetes Manifest
+  dependsOn: Push
+  jobs:
+    - job: UpdateManifest
+      displayName: Update Image Tag in K8s Manifest
+      steps:
+        - checkout: self
+        - task: ShellScript@2
+          displayName: Run Script to Update Manifest
+          inputs:
+            scriptPath: '$(updateScriptPath)'
+            args: '$(appName) $(dockerUsername) $(imageTag) $(azureOrgName) $(projectName) $(repoName)'
+          env:
+            SYSTEM_ACCESSTOKEN: $(System.AccessToken)  # ✅ Only once here
+
+
+
+# trigger:
+#   paths:
+#     include:
+#       - worker/*
+
+# resources:
+#   - repo: self
+
+# variables:
+#   tag: '$(Build.BuildId)'
+
+# pool:
+#   name: 'agentcicd'
+
+# stages:
+# # 1️⃣ Build Stage
+# - stage: Build
+#   displayName: Build the Docker Image
+#   jobs:
+#     - job: BuildJob
+#       displayName: Build Docker Image
+#       steps:
+#         - task: Docker@2
+#           displayName: Build Docker Image
+#           inputs:
+#             command: 'build'
+#             Dockerfile: 'worker/Dockerfile'
+#             tags: '$(dockerImageName):$(dockerImageTag)'
+
+# # 2️⃣ Login and Push Image
+# - stage: Push
+#   displayName: Push Docker Image
+#   dependsOn: Build
+#   jobs:
+#     - job: PushJob
+#       displayName: Push Docker Image
+#       steps:
+#         - task: Docker@2
+#           inputs:
+#             containerRegistry: 'docker'
+#             repository: '9881665778/worker-app'
+#             command: 'buildAndPush'
+#             Dockerfile: 'worker/Dockerfile'
+#             tags: '$(Build.BuildId)'

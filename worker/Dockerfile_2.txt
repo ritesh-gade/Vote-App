@@ -1,0 +1,29 @@
+# Dockerfile for .NET 7 Worker Service targeting ARM64
+
+# Use ARG before FROM to set the build platform
+ARG BUILDPLATFORM
+ARG TARGETPLATFORM
+
+FROM --platform=${BUILDPLATFORM} mcr.microsoft.com/dotnet/sdk:7.0 AS build
+
+ARG TARGETARCH
+ARG TARGETPLATFORM
+ARG BUILDPLATFORM
+
+RUN echo "Building on $BUILDPLATFORM for $TARGETPLATFORM"
+
+WORKDIR /source
+
+COPY *.csproj .
+RUN dotnet restore
+
+COPY . .
+RUN dotnet publish -c Release -o /app --no-restore
+
+# Runtime stage
+FROM --platform=${TARGETPLATFORM} mcr.microsoft.com/dotnet/runtime:7.0
+
+WORKDIR /app
+COPY --from=build /app .
+
+ENTRYPOINT ["dotnet", "Worker.dll"]
