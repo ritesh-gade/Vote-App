@@ -15,5 +15,5 @@ spec:
         app: worker
     spec:
       containers:
-      - image: 9881665778/worker-app:81
+      - image: 9881665778/worker-app:95
         name: worker
